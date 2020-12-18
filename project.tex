@@ -1,0 +1,134 @@
+\documentclass{beamer}
+
+ \usepackage{beamerthemesplit} % // Activate for custom appearance
+ \usecolortheme[snowy]{owl}
+ \usepackage[style=authortitle]{biblatex}
+ \addbibresource{project.bib}
+ 
+
+\title{Certified robustness via randomised smoothing}
+\author{Pavel Shevchuk}
+\date{\today}
+
+\begin{document}
+
+\frame{\titlepage}
+
+\section{Outline}
+\frame{\tableofcontents}
+
+\section{Adversarial attacks}
+%\subsection{Adversarial attacks}
+\frame
+{
+  \frametitle{Adversarial attacks: a recap}
+
+  By minimising $ loss(f, x) + ||x-x'||_2$ you can produce example which is very similar to the existing one, but where the network is (often catastrophically) wrong.
+  \footcite{szegedy2014intriguing}
+      \begin{center}
+  \includegraphics[scale=0.5]{adversarial_img_1}
+  \end{center}
+}
+\frame
+{
+  \frametitle{Adversarial attacks: real world}
+
+  It is possible to do an attack of this kind in the real world. \footcite{kurakin2017adversarial, Sharif16AdvML}
+    \begin{center}
+  \includegraphics[scale=0.5]{adversarial_img_2}
+  \end{center}
+}
+
+\frame
+{
+  \frametitle{Types of adversarial attacks}
+  There are different approaches, but the big ones are:
+  \begin{itemize}
+  \item Change the whole image \em *slightly* \em
+  \item Change a small part of the image \em *wildly* \em
+  \end{itemize}
+  
+  Today I will only consider the former type of attacks.
+  }
+
+\frame
+{
+\frametitle{Defences for adversarial attacks}
+	\begin{itemize}
+	\item Many defences were proposed since 2014
+	\item Most of the empirical defences were broken \footcite{athalye2018robustness,carlini2017adversarial}
+	\item A systematic approach is needed
+	\end{itemize}
+}
+
+\frame
+{
+	\frametitle{Certified robustness}
+	Certified robustness - in addition to giving you our prediction for $x$ we guarantee that for all $x'$ within a certain radius of $x$ the prediction is the same.
+	\begin{center}
+  \includegraphics[scale=0.5]{decision-boundary}
+  \end{center}
+
+}
+
+\section{Randomised smoothing}
+\frame
+{
+\frametitle{Randomised smoothing}
+Problem: we don't want to limit the expressive power of the classifier.
+
+Solution: take a look at $\text{E}f(x + \epsilon)$
+
+Intuition: small adversarial attacks are masked by noise.
+
+}
+
+\frame
+{
+\frametitle{Theory}
+
+\begin{itemize}[<+->]
+\item[] Can we actually prove something about $\text{E}f(x + \epsilon)$?
+
+\item[] Answer: yes! (At least for Gaussian noise) \footcite{cohen2019certified, salman2020provably}
+
+\item[] \[R = \frac{\sigma}{2}(\Phi^{-1}(\underline{p_A})-\Phi^{-1}(\overline{p_B}))\]
+
+\item[] This is a tight boundary!
+
+\end{itemize}
+}
+
+\frame
+{
+\frametitle{Some practical considerations}
+
+We use Monte-Carlo to calculate $\text{E}f(x + \epsilon)$ and a rank test \footcite{hung2019} test to check whether the ordering of the classes is statistically significant.
+
+To train you simply add noise while doing the SGD (Monte-Carlo with 1 example)
+
+Adding adversarial example to the process of testing and pre-training helps to increase the radius.\footcite{salman2020provably}
+
+You need a lot of samples of Monte-Carlo ($10^5$ in the original article).
+}
+
+\section{Empirical behaviour \& implementation}
+
+\frame
+{
+\frametitle{Empirical behaviour}
+	\begin{center}
+  \includegraphics[scale=.75]{graph}
+  \end{center}
+}
+
+\frame
+{
+     \frametitle{Implementation}
+     Yes, the original article's solution was re-implemented, trained \& evaluated on MNIST.
+     
+     For CIFAR, while the network was re-trained, it wasn't re-evaluated. Reason: $\frac{15 * 10,000}{3,600} \approx 42$
+}
+
+
+\end{document}
