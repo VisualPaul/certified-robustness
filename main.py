@@ -108,9 +108,9 @@ class MnistModel(nn.Module):
 
 class 
 
-(nn.Module):
+class CifarModel(nn.Module):
     def __init__(self):
-        super(MnistModel, self).__init__()
+        super(CifarModel, self).__init__()
         self.resnet50 = models.resnet50(pretrained=True)
         self.resnet50.fc = nn.Linear(512, 10)
 
@@ -165,6 +165,37 @@ def train(loader, wrapper, criterion, optimizer, device=torch.device('cpu')):
         optimizer.step()
         
 
+
+def train_2(loader, wrapper, criterion, optimizer, n, c, device=torch.device('cpu')):
+    wrapper.train()
+    loss_cnt = AverageCounter()
+    printer = PeriodicPrinter(5)
+
+    for i, (X, y) in enumerate(loader):
+        losses = None
+        outputs = None
+        for i in range(n):
+            output = wrapper.get_training_output(X.to(device))
+            loss = criterion(output, y.to(device))
+            if losses is None:
+                losses = loss
+            else:
+                losses.add_(loss)
+
+            if outputs is None:
+                outputs = output
+            else:
+                outputs.add_(output)
+        out1, out2 = F.softmax(outputs / n).sort(descending=True)[:2]
+        loss = losses / n + c, out2 / out1
+
+
+        loss_cnt.add(loss.item())
+        loss_cnt.zero(printer.print('{:.4f}'.format(loss_cnt.get_average())))
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
 if torch.cuda.is_available():
     device = torch.device('cuda')
 else:
@@ -192,7 +223,7 @@ def test(dataset, wrapper, n, alpha, radii, device):
     return res
 
 
-def do_train(dataset):
+def do_train(dataset, new_train=False):
     if dataset == 'mnist':
         train_dataset = datasets.MNIST('mnist/', download=True, transform=transforms.Compose([
             transforms.ToTensor(),
@@ -228,7 +259,7 @@ def do_train(dataset):
     while epoch < 100:
         epoch += 1
         print(f'Epoch {epoch}')
-        train(train_loader, wrapper, criterion, optimizer, device)
+        train2(train_loader, wrapper, criterion, optimizer, 10, 1., device)
 
     torch.save(dataset + '.pth')
 
@@ -266,7 +297,10 @@ def main():
 
     if sys.argv[1] == 'train':
         assert len(sys.argv) == 3:
-        do_train(sys.argv[2])
+        do_train(sys.argv[2], False)
+    elif sys.argv[1] == 'train2':
+        assert len(sys.argv) == 3:
+        do_train(sys.argv[2], True)
     elif sys.argv[1] == 'test':
         do_test(sys.argv[2])
 
