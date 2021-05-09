@@ -6,90 +6,12 @@ import torch
 from scipy.stats import norm, binom_test
 from statsmodels.stats.proportion import proportion_confint
 import numpy as np
-from tqdm import notebook as tqdm
+import torchvision
+from torchvision import datasets, transforms, models
+import tqdm
 
-class SmoothingWrapper:  # Not a Module
-    def __init__(self, model, sigma, batch_size=64):
-        self.model = model
-        self.sigma = sigma
-        self.batch_size = batch_size
-        
-    def predict(self, x, alpha, mc_size=None):
-        """ Gets prediction counts for MC
-        :param x: the input [channel x height x width]
-        :param alpha: the failure probability
-        :param mc_size: the number of Monte Carlo samples to use
-        :return: predicted class or None
-        """
-        counts = self.get_prediction_counts(x, mc_size)
-        count1, count2 = counts.sort(descending=True)[:2]
-        if binom_test(count1, count1 + count2) < alpha:
-            return counts.argmax().item()
-        else:
-            return None
-
-    def get_prediction_counts(self, x, mc_size=None):
-        """ Gets prediction counts for MC
-        :param x: the input [channel x height x width]
-        :param mc_size: the number of Monte Carlo samples to use
-        :return: counts themselves
-        """
-        if mc_size is None:
-            mc_size = self.batch_size
-        counts = None
-        with torch.no_grad():
-            for processed in range(0, mc_size, self.batch_size):
-                sz = min(self.batch_size, mc_size - processed)
-                outputs = self.model(self._get_noised_inputs(x, sz))
-                add = outputs.argmax(1).bincount(minlength=outputs.shape[1])
-                if counts is None:
-                    counts = add
-                else:
-                    counts += add
-        return counts
-        
-    def _get_noised_inputs(self, x, size):
-        """ Gets noised inputs
-        :param x: the input [channel x height x width]
-        :return:[size x ch x heights x width] - samples from N(x, diag(self.sigma**2))
-        """
-        # x: [ch x heights x width]
-        # returns [size x ch x heights x width] with size examples shifted by noise
-        
-        with torch.no_grad():
-            x = x.expand((size, *x.shape))
-            return x + torch.randn_like(x, device=x.device) * self.sigma
-        
-    def certify(self, x, n_sel, n_est, alpha):
-        """ Certify radius with probability 1 - alpha
-        :param x: the input [channel x height x width]
-        :param n_sel: the number of Monte Carlo samples to use for selection
-        :param n_est: the number of Monte Carlo samples to use for estimation
-        :param alpha: the error probability
-        :return: (predicted class, certified radius) or (None, None)
-        """
-        counts_selection = self.get_prediction_counts(x, n_sel)
-        result_class = counts_selection.argmax().item()
-        count_est = self.get_prediction_counts(x, n_est)[result_class].item()
-        est_lo, est_hi = proportion_confint(count_est, n_est, 2 * alpha, method='beta')
-        if est_lo < 0.05:
-            return None, None
-        else:
-            return result_class, self.sigma * norm.ppf(est_lo)
-        
-    def eval(self):
-        self.model.eval()
-        
-    def train(self):
-        self.model.train()
-        
-    def get_training_output(self, x):
-        """ Add noise to the sample for training and compute the model there
-        :param x: the input sample [batch x channel x height x width]
-        :return: output [batch x classes]
-        """
-        return self.model(x + torch.randn_like(x, device=x.device) * self.sigma)
-    
+from scipy.stats import norm, binom_test
+from statsmodels.stats.proportion import proportion_confint
 
 class RepeatableTimer:
     def __init__(self, secs, up_initially=False):
@@ -98,7 +20,7 @@ class RepeatableTimer:
             self.last_time = -secs
         else:
             self.last_time = time.time()
-        
+
     def check_time(self):
         cur_time = time.time()
         if self.last_time + self.secs < cur_time:
@@ -106,7 +28,7 @@ class RepeatableTimer:
             return True
         else:
             return False
-    
+
 
 class PeriodicPrinter:
     def __init__(self, secs):
@@ -129,19 +51,19 @@ class AverageCounter:
             return float('nan')
         else:
             return self.value / self.total
-        
+
     def add(self, x):
         self.total += 1
         self.value += x
 
-            
+
 class MovingAverageCounter:
     def __init__(self, N):
         self.d = deque()
         self.max_size = N
         self.sum = 0.
         self.time_since_recalculation = 0
-    
+
     def add(self, x):
         self.d.appendleft(x)
         self.sum += x
@@ -150,36 +72,35 @@ class MovingAverageCounter:
             self.time_since_recalculation += 1
         if self.time_since_recalculation >= 100 * self.max_size:
             self._recalculate()
-    
+
     def _recalculate(self):
         self.sum = sum(self.d)
         self.time_since_recalculation = 0
-        
+
     def get_average(self):
         if self.d:
             return self.sum / len(self.d)
         else:
             return float('nan')
 
-        
+
+@torch.no_grad()
 def get_prediction_counts(model, x, mc_size, batch_size, sigma, xrange=range):
     counts = None
-    with torch.no_grad():
-        for processed in xrange(0, mc_size, batch_size):
-            sz = min(batch_size, mc_size - processed)
-            noised_inputs = x.expand(sz, *x.shape)
-            noised_inputs = noised_inputs + torch.randn_like(noised_inputs, device=noised_inputs.device) * sigma
-            outputs = (model(noised_inputs) > 0).to(torch.int64)
-            if counts is None:
-                counts = torch.zeros(2, outputs.shape[1], dtype=torch.int64, device=outputs.device)
-            add = torch.sum(outputs, dim=0)
-            counts[1] += add
-            counts[0] += sz - add
+    for processed in xrange(0, mc_size, batch_size):
+        sz = min(batch_size, mc_size - processed)
+        noised_inputs = x.expand(sz, *x.shape)
+        noised_inputs = noised_inputs + torch.randn_like(noised_inputs) * sigma
+        outputs = (model(noised_inputs) > 0).to(torch.int64)
+        if counts is None:
+            counts = torch.zeros(2, outputs.shape[1], dtype=torch.int64,
+                                 device=outputs.device)
+        add = outputs.sum(dim=0)
+        counts[1] += add
+        counts[0] += sz - add
     return counts
 
 
-from scipy.stats import norm, binom_test
-from statsmodels.stats.proportion import proportion_confint
 def certify(model, x, n_sel, n_est, alpha, sigma, batch_size, xrange=range):
     """ Certify radius with probability 1 - alpha
     :param x: the input [channel x height x width]
@@ -188,24 +109,24 @@ def certify(model, x, n_sel, n_est, alpha, sigma, batch_size, xrange=range):
     :param alpha: the error probability
     :return: (predicted classes, certified radii), if the prediction was rejected, the predicted class is 2 and radius 0
     """
-    
+
     counts_selection = get_prediction_counts(model, x, n_sel, batch_size, sigma, xrange=xrange)
     predicted_class = (counts_selection[1] > counts_selection[0]).to(torch.int64)
     counts_est = get_prediction_counts(model, x, n_est, batch_size, sigma, xrange=xrange)
-    
+
     result_class = []
     result_radius = []
-    
+
     for i in range(len(predicted_class)):
         count_est = counts_est[predicted_class[i].item(),i].item()
         est_lo, est_hi = proportion_confint(count_est, n_est, 2 * alpha, method='beta')
-        if binom_test(count_est, n_est,p=0.5) < alpha:
+        if est_lo < 0.5:
             result_class.append(2)  # abstain
             result_radius.append(0.)
         else:
             result_class.append(predicted_class[i].item())
             result_radius.append(sigma * norm.ppf(est_lo))
-            
+
     return torch.tensor(result_class), torch.tensor(result_radius)
 
 
@@ -226,7 +147,7 @@ def calculate_radii(dataset, indicies, model, n_sel, n_est, alpha, sigma, device
     predicted_classes = torch.stack(predicted_classes)
     targets = torch.stack(targets)
     predicted_radii = torch.stack(predicted_radii)
-    
+
     return {'y': targets, 'y_pred': predicted_classes, 'r': predicted_radii}
 
 
@@ -241,12 +162,12 @@ def get_certified_accuracies(d):
 class NoAugmenter:
     def augment_tensors(self, X, y, model):
         return X, y
-    
+
 
 class RandomNoiseAugmenter:
     def __init__(self, sigma):
         self.sigma = sigma
-        
+
     def augment_tensors(self, X, y, model):
         X = X + torch.randn_like(X, device=X.device) * self.sigma
         return X, y
@@ -257,7 +178,7 @@ class AdversarialAttackAugmenter:
         self.max_norm = max_norm
         self.noise_cnt = noise_cnt
         self.sigma = sigma
-        
+
     def augment_tensors(self, X, y, model, return_noises=False):
         assert model.training
         X = X.repeat(self.noise_cnt, 1, 1, 1)
@@ -274,12 +195,12 @@ class AdversarialAttackAugmenter:
                 param.requires_grad_(True)
         y = y.repeat(self.noise_cnt, 1)
         X.add_(noise)
-        
+
         if return_noises:
             return X, y, noises
         else:
             return X, y
-        
+
     def _attack(self, model, X, y, noise):
         batch_size = y.shape[0]
         delta = torch.zeros(batch_size, *X.shape[1:], device=X.device, requires_grad=True)
@@ -288,7 +209,7 @@ class AdversarialAttackAugmenter:
             X_adv = X + delta.repeat(self.noise_cnt, 1, 1, 1) + noise
             logits = model(X_adv)
             probs = torch.sigmoid(logits).view(self.noise_cnt, batch_size, logits.shape[-1]).mean(dim=0)
-            
+
             loss = -torch.nn.functional.binary_cross_entropy(probs, y)
             optimizer.zero_grad()
             loss.backward()
@@ -305,6 +226,140 @@ class AdversarialAttackAugmenter:
 
             delta.data.renorm_(p=2, dim=0, maxnorm=self.max_norm),
         return X + delta.repeat(self.noise_cnt, 1, 1, 1)
+
+
+def mask_batch(batch, pos, block_size):
+    bs, ch, h, w = batch.shape
+    assert 0 <= pos < w
+    out_c1 = torch.zeros_like(batch)
+    out_c2 = torch.zeros_like(batch)
+    if pos + block_size > w:
+        out_c1[:,:,:,pos:] = batch[:,:,:,pos:]
+        out_c2[:,:,:,pos:] = 1. - batch[:,:,:,pos:]
+
+        rem = block_size - (w - pos)
+        out_c1[:,:,:,:rem] = batch[:,:,:,:rem]
+        out_c2[:,:,:,:rem] = 1. - batch[:,:,:,:rem]
+    else:
+        out_c1[:,:,:, pos:pos+block_size] = batch[:,:,:,pos:pos+block_size]
+        out_c2[:,:,:, pos:pos+block_size] = 1. - batch[:,:,:,pos:pos+block_size]
+    return torch.cat([out_c1, out_c2], 1)
+
+
+def random_mask_batch(batch, block_size):
+    pos = torch.randint(batch.size(3), size=(1,)).item()
+    return mask_batch(batch, pos, block_size)
+
+def random_mask_batch_alt(batch, block_size):
+    batch = batch.permute(0, 2, 3, 1) # color channel last
+    bs, h, w, ch = batch.shape
+    out_c1 = torch.zeros_like(batch)
+    out_c2 = torch.zeros_like(batch)
+    pos = torch.randint(w, size=(1,)).item()
+    if pos + block_size > w:
+        out_c1[:,:,pos:] = batch[:,:,pos:]
+        out_c2[:,:,pos:] = 1. - batch[:,:,pos:]
+
+        out_c1[:,:,:pos+block_size-w] = batch[:,:,:pos+block_size-w]
+        out_c2[:,:,:pos+block_size-w] = 1. - batch[:,:,:pos+block_size-w]
+    else:
+        out_c1[:,:,pos:pos+block_size] = batch[:,:,pos:pos+block_size]
+        out_c2[:,:,pos:pos+block_size] = 1. - batch[:,:,pos:pos+block_size]
+    out_c1 = out_c1.permute(0, 3, 1, 2)
+    out_c2 = out_c2.permute(0, 3, 1, 2)
+    out = torch.cat((out_c1,out_c2), 1)
+    #print(out[14,:,5:10,5:10])
+    return out
+
+def yes_or_no_p(prompt):
+    while True:
+        txt = input(f'{prompt} [y/n]: ')
+        if txt.lower().startswith('y'):
+            return True
+        elif txt.lower().startswith('n'):
+            return False
+        else:
+            print("Please enter 'Yes' or 'No' ")
+
+
+class NormalizeLayer(torch.nn.Module):
+    """Standardize the channels of a batch of images by subtracting the dataset mean
+      and dividing by the dataset standard deviation.
+      In order to certify radii in original coordinates rather than standardized coordinates, we
+      add the Gaussian noise _before_ standardizing, which is why we have standardization be the first
+      layer of the classifier rather than as a part of preprocessing as is typical.
+      """
+
+    def __init__(self, means, stds):
+        """
+        :param means: the channel means
+        :param stds: the channel standard deviations
+        """
+        super(NormalizeLayer, self).__init__()
+        self.register_buffer('means', torch.tensor(means), persistent=False)
+        self.register_buffer('stds', torch.tensor(stds), persistent=False)
+
+    def forward(self, x):
+        means = self.means.view(1, -1, 1, 1).expand_as(x)
+        stds = self.std.view(1, -1, 1, 1).expand_as(x)
+        return (x - means) / sds
+
+
+class NullWriter:
+    def add_scalar(tag, scalar_value, global_step=None, walltime=None):
+        pass
+
+    def add_scalars(main_tag, tag_scalar_dict, global_step=None, walltime=None):
+        pass
+
+    def add_figure(tag, figure, global_step=None, close=True, walltime=None):
+        pass
+
+
+CELEBA_IMG_MEAN = [0.5063, 0.4258, 0.3832]
+CELEBA_IMG_STD  = [0.2660, 0.2452, 0.2414]
+
+def get_train_dataset(dataset_path, normalize=False):
+    dset_transforms = [
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+    ]
+    if normalize:
+        dset_transforms.append(transforms.Normalize(mean=CELEBA_IMG_MEAN,
+                                                    std=CELEBA_IMG_STD))
+    dset_transforms = transforms.Compose(dset_transforms)
+    return datasets.CelebA(args.dataset_path, split='train',
+        target_type='attr', download=False, transform=dset_transforms)
+
+
+def get_test_dataset(dataset_path, normalize=False, test_set=False):
+    if normalize:
+        celeba_transform_test = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=CELEBA_IMG_MEAN, std=CELEBA_IMG_STD),
+        ])
+    else:
+        celeba_transform_test = transforms.ToTensor()
+
+    test_split = 'test' if test_set else 'valid'
+
+    celeba_test_dataset = datasets.CelebA(dataset_path, split=test_split,
+        target_type='attr', download=False, transform=celeba_transform_test)
+
+
+""" Some statistical functions to allow differentiable binary proportion estimation """
+def erfcinv(x):
+    return torch.erfinv(1 - x)
+
+def ppf(x):
+    return - 2**.5 * erfcinv(2 * x)
+
+def wilson(ns, n, alpha=0.01):
+    z = norm.ppf(alpha) * 0.5
+    p_cent = (ns + 0.5*z**2) / (n + z**2)
+    p_disc_sqrt = z / (n + z**2) * (ns*(n - ns)/n+z**2 * 0.25)**.5
+    return (p_cent + p_disc_sqrt, p_cent - p_disc_sqrt)
+
 
 if __name__ == '__main__':
     raise NotImplemented('this module is not for launching')
