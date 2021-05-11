@@ -343,7 +343,7 @@ def get_test_dataset(dataset_path, normalize=False, test_set=False):
 
     test_split = 'test' if test_set else 'valid'
 
-    celeba_test_dataset = datasets.CelebA(dataset_path, split=test_split,
+    return datasets.CelebA(dataset_path, split=test_split,
         target_type='attr', download=False, transform=celeba_transform_test)
 
 
@@ -359,6 +359,21 @@ def wilson(ns, n, alpha=0.01):
     p_cent = (ns + 0.5*z**2) / (n + z**2)
     p_disc_sqrt = z / (n + z**2) * (ns*(n - ns)/n+z**2 * 0.25)**.5
     return (p_cent + p_disc_sqrt, p_cent - p_disc_sqrt)
+
+def wilson_estimate_radii(y_pred, y_true, alpha, sigma):
+    # Assuming y_pred: [bs x classes x n_est]
+
+    batch_size, classes, n_est = y_pred.shape
+
+    result = torch.zeros(batch_size, classes)
+    y_true = y_true.unsqueeze(-1).expand_as(y_pred)
+    y_pred_alt = y_pred * y_true + (1 - y_pred) * (1 - y_true)
+    est_lo, est_hi = wilson(y_pred_alt.sum(dim=-1), n_est, alpha=2*alpha)
+    CLAMP_LO = 1e-9
+    CLAMP_HI = 1 - 1e-9
+    clamped = (est_lo < CLAMP_LO) | (est_lo > CLAMP_HI)
+    return sigma * ppf(est_lo.type(torch.float64).clamp(min=CLAMP_LO, max=CLAMP_HI)), clamped
+
 
 
 if __name__ == '__main__':

@@ -27,8 +27,8 @@ parser.add_argument('--seed', default=1, type=int, help='seed')
 parser.add_argument('--dataset-path', default='dsets/',
                     help='path to CelebA dataset')
 parser.add_argument('--log-dir', default='runs/', help='Tensorboard directory')
-parser.add_argument('--noise-cnt', default=2, type=int, help='number of noises')
 parser.add_argument('--sigma', default=1.0, type=float, help='scale of noise')
+parser.add_argument('--alpha', default=0.01, type=float, help='confidence level')
 parser.add_argument('--wilson', action='store_true',
                     help='Use Wilson interval instead of Clopper-Pearson')
 #parser.add_argument('--radii', default='0,0.5,1.0,1.5,2.0,2.5,3.0',
@@ -40,6 +40,8 @@ parser.add_argument('--n-select', type=int, default=100,
 
 parser.add_argument('--n-estimate', type=int, default=10000,
                     help='How many samples to use to estimate radius')
+parser.add_argument('--normalize', action='store_true',
+                    help='normalize dataset')
 parser.add_argument('--test', action='store_true',
                     help='Use test set instead of validation')
 parser.add_argument('--figure', help='where to store the plot')
@@ -64,28 +66,30 @@ batch_size = args.batch_size
 
 assert batch_size > 0
 
+checkpoint = args.checkpoint
+
 assert os.path.isfile(checkpoint), f'chekpoint does not exist {checkpoint}'
 checkpoint = torch.load(checkpoint)
 celeba_test_dataset = get_test_dataset(args.dataset_path,
-                                       normalize=checkpoint['normalize'],
+                                       normalize=args.normalize,
                                        test_set=args.test)
 
 model = resnet.resnet50(num_classes=40, input_channels=3)
 
-if checkpoint['normalize']:
+if checkpoint.get('normalize', False):
     model = nn.Sequential([NormalizeLayer(img_mean, img_std), model])
 model = model.to(device)
-model = torch.DataParallel(model)
+#model = nn.DataParallel(model)
 
 model.load_state_dict(checkpoint['net'])
 
 if args.k:
-    rng = range(k)
+    rng = range(args.k)
 else:
     rng = range(len(celeba_test_dataset))
 
 radii = calculate_radii(celeba_test_dataset, rng, model, args.n_select,
-                        args.n_estimate, args.sigma, device=device,
+                        args.n_estimate, args.alpha, args.sigma, device=device,
                         batch_size=batch_size)
 
 if args.radii:

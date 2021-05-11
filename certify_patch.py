@@ -20,8 +20,8 @@ from smoothing import (AverageCounter, MovingAverageCounter,
 
 parser = argparse.ArgumentParser(description='PyTorch Celeba Training')
 parser.add_argument('--band-size', default=10, type=int, help='band size')
-parser.add_argument('--certify-size', default=20, type=int,
-                    help='size to certify')
+parser.add_argument('--certify-size', default=[20], type=int, nargs='*',
+                    help='sizes to certify')
 parser.add_argument('--threshold', default=0.1, type=float,
                     help='threshold for smoothing abstain')
 
@@ -38,7 +38,8 @@ CUDA = torch.cuda.is_available()
 
 if CUDA:
     device = torch.device('cuda')
-    print(torch.cuda.get_device_name(device))
+    print(f'CUDA_VISIBLE_DEVICES={os.environ["CUDA_VISIBLE_DEVICES"]}', file=sys.stderr)
+    print(torch.cuda.get_device_name(device), file=sys.stderr)
     cudnn.benchmark = True
 else:
     device = torch.device('cpu')
@@ -73,7 +74,6 @@ checkpoint_dir = './checkpoints'
 if not os.path.exists(checkpoint_dir):
     os.makedirs(checkpoint_dir)
 
-print('Resuming....')
 checkpoint_file = f'{checkpoint_dir}/{args.checkpoint}'
 assert os.path.isfile(checkpoint_file)
 checkpoint = torch.load(checkpoint_file)
@@ -92,22 +92,20 @@ def certify_patch(batch):
         out = torch.sigmoid(model(mask_batch(batch, pos, band_size)))
         predictions_1 += (out > 0.5 + args.threshold).type(torch.int)
         predictions_0 += (out < 0.5 - args.threshold).type(torch.int)
-    num_affected = args.certify_size + args.band_size - 1
     predictions = (predictions_1 > predictions_0).type(torch.int)
 
     predictions_diff = (torch.maximum(predictions_0, predictions_1) -
                         torch.minimum(predictions_0, predictions_1))
-
-    cert = ((predictions_diff > 2 * num_affected) |
-            (predictions_diff == 2 * num_affected) & (predictions == 0))
-
+    cert = (predictions_diff - 2 * args.band_size + 2 + (predictions == 0)) // 2
     return predictions, cert
 
 
-correct = cert_correct = certified = total = 0
+correct = total = 0
+cert_correct = torch.zeros(len(args.certify_size))
+certified = torch.zeros(len(args.certify_size))
 
 for X, y in tqdm.tqdm(test_loader):
-    total += y.num_elements()
+    total += y.numel()
 
     X = X.to(device)
     y = y.to(device)
@@ -115,15 +113,18 @@ for X, y in tqdm.tqdm(test_loader):
     y_pred, cert = certify_patch(X)
 
     correct += (y_pred == y).sum().item()
-    certified += cert.sum().item()
-    cert_correct += ((y_pred == y) & cert).sum().item()
+
+    for i, r in enumerate(args.certify_size):
+        certified[i] += (cert >= r).sum().item()
+        cert_correct[i] += ((y_pred == y) & (cert>= r)).sum().item()
 
 print('Parameters: ')
-print(f'Band size is {args.band_size}')
-print(f'Certifying against {args.certify_size}x{args.certify_size}')
-print(f'Using threshold {args.threshold}')
+print(f'> Band size is {args.band_size}')
+print(f'> Using threshold {args.threshold}')
+print(f'> Labels total {total}')
 print('Results: ')
-print(f'Certified accuracy {cert_correct / total * 100.:.1f}% ({cert_correct})')
-print(f'Accuracy {correct / total * 100.:.1f}% ({correct})')
-print(f'Certified percentage {certified / total * 100.:.1f}% ({certified})')
-print(f'Images total {total}')
+print(f'> Accuracy {correct / total * 100.:.1f}% ({correct})')
+for i, r in enumerate(args.certify_size):
+    print(f'> Certifying against {r}')
+    print(f'>> Certified accuracy {cert_correct[i] / total * 100.:.1f}% ({cert_correct[i]})')
+    print(f'>> Certified percentage {certified[i] / total * 100.:.1f}% ({certified[i]})')

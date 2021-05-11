@@ -17,8 +17,9 @@ import resnet
 import matplotlib.pyplot as plt
 
 from smoothing import (AverageCounter, MovingAverageCounter,
-                      AdversarialAttackAugmenter, calculate_radii,
-                      get_certified_accuracies, NormalizeLayer, yes_or_no_p)
+                      AdversarialAttackAugmenter, RandomNoiseAugmenter,
+                      calculate_radii, get_certified_accuracies, NormalizeLayer,
+                      yes_or_no_p)
 
 parser = argparse.ArgumentParser(description='PyTorch Celeba Training')
 parser.add_argument('--lr', default=1e-3, type=float, help='learning rate')

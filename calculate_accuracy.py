@@ -28,7 +28,7 @@ parser.add_argument('--test', action='store_true',
 parser.add_argument('--normalize', action='store_true',
                     help='Normalize set before feeding it to the model')
 parser.add_argument('--rewrite-accuracy', action='store_true',
-                    help='Normalize set before feeding it to the model')
+                    help='rewrite accuracy into the checkpoint')
 
 args = parser.parse_args()
 
@@ -45,7 +45,7 @@ img_mean = [0.5063, 0.4258, 0.3832]
 img_std = [0.2660, 0.2452, 0.2414]
 
 if args.normalize:
-    normalize = transforms.Normalize(mean=img_mean, std=img_std)
+    normalize = [transforms.Normalize(mean=img_mean, std=img_std)]
 else:
     normalize = []
 
@@ -63,13 +63,8 @@ test_loader = torch.utils.data.DataLoader(celeba_test_dataset, batch_size,
     shuffle=False, num_workers=2, pin_memory=True)
 
 
-checkpoint_dir = './checkpoints'
-if not os.path.exists(checkpoint_dir):
-    os.makedirs(checkpoint_dir)
-
-resume_file = f'{checkpoint_dir}/{args.resume}'
-assert os.path.isfile(resume_file)
-checkpoint = torch.load(resume_file)
+assert os.path.isfile(args.checkpoint)
+checkpoint = torch.load(args.checkpoint)
 
 INPUT_CHANNELS = checkpoint.get('input_channels', 3)
 
@@ -80,7 +75,7 @@ USE_6_CHANNELS = (INPUT_CHANNELS == 6)
 model = resnet.resnet50(num_classes=40,
                         input_channels=INPUT_CHANNELS)
 
-if checkpoint['normalize']:
+if checkpoint.get('normalize', False):
     if args.normalize:
         print('Warning: both early and late normalizations are active')
     model = nn.Sequential([NormalizeLayer(img_mean, img_std), model])
@@ -96,7 +91,9 @@ model.load_state_dict(checkpoint['net'])
 correct = total = 0
 
 for X, y in tqdm.tqdm(test_loader):
-    total += len(y)
+    X = X.to(device)
+    y = y.to(device)
+    total += y.numel()
 
     y_pred = (model(X) > 0).type(torch.int)
 
