@@ -138,7 +138,7 @@ def calculate_radii(dataset, indicies, model, n_sel, n_est, alpha, sigma, device
     predicted_classes = []
     targets = []
     predicted_radii = []
-    for i in tqdm.tqdm(indicies):
+    for i in indicies:
         img, target = dataset[i]
         res_cl, res_rad = certify(model, img.to(device), n_sel, n_est, alpha, sigma, batch_size)
         predicted_classes.append(res_cl)
@@ -328,7 +328,7 @@ def get_train_dataset(dataset_path, normalize=False):
         dset_transforms.append(transforms.Normalize(mean=CELEBA_IMG_MEAN,
                                                     std=CELEBA_IMG_STD))
     dset_transforms = transforms.Compose(dset_transforms)
-    return datasets.CelebA(args.dataset_path, split='train',
+    return datasets.CelebA(dataset_path, split='train',
         target_type='attr', download=False, transform=dset_transforms)
 
 
@@ -350,6 +350,7 @@ def get_test_dataset(dataset_path, normalize=False, test_set=False):
 """ Some statistical functions to allow differentiable binary proportion estimation """
 def erfcinv(x):
     return torch.erfinv(1 - x)
+
 
 def ppf(x):
     return - 2**.5 * erfcinv(2 * x)

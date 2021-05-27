@@ -36,6 +36,7 @@ parser.add_argument('--alpha', default=0.01, type=float,
                     help='confidence level for the interval')
 parser.add_argument('--sigma', default=1.0, type=float,
                     help='noise scale')
+parser.add_argument('--short-prefix', default='rad', help='short checkpoint prefix')
 parser.add_argument('-y', action='store_true', help='force overwrite')
 parser.add_argument('--cpu', action='store_true', help='force CPU')
 
@@ -48,7 +49,7 @@ torch.cuda.manual_seed(args.seed)
 checkpoint_dir = 'checkpoints'
 if not os.path.exists('./checkpoints'):
     os.makedirs('./checkpoints')
-checkpoint_file = f'./{checkpoint_dir}/rad-lr_{args.lr}_decay_{args.regularization}_epoch_{{}}.pth'
+checkpoint_file = f'./{checkpoint_dir}/rad-lr_{args.lr}_sigma_{args.sigma}_decay_{args.regularization}_epoch_{{}}.pth'
 
 print(f'checkpoint file is {checkpoint_file}', file=sys.stderr)
 
@@ -105,7 +106,7 @@ if args.resume:
     resume_name = os.path.basename(args.resume)
     model.load_state_dict(checkpoint['net'])
     start_epoch = checkpoint['epoch']+1
-    checkpoint_file = f'./{checkpoint_dir}/rad-lr_{args.lr}_decay_{args.regularization}_epoch_{{}}_resume_{resume_name}.pth'
+    checkpoint_file = f'./{checkpoint_dir}/rad-lr_{args.lr}_sigma_{args.sigma}_decay_{args.regularization}_epoch_{{}}_resume_{resume_name}.pth'
 
 if os.path.isfile(checkpoint_file.format(start_epoch)):
     if not yes_or_no_p('Checkpoint file already exists, overwrite?'):
@@ -142,7 +143,7 @@ def train(epoch):
         loss_cnt.add(loss.item())
         clamped_cnt.add(c.type(torch.float64).mean().item())
         writer.add_scalar('Loss/train', loss_cnt.get_average(), iteration)
-        writer.add_scalar('Clamped/train', clamped.get_average(), iteration)
+        writer.add_scalar('Clamped/train', clamped_cnt.get_average(), iteration)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -176,12 +177,12 @@ def validate(epoch):
         'acc': acc,
         'epoch': epoch,
         'input_channels': 3,
-        'normalize': True,
+        'normalize': False,
     }
     if not os.path.isdir(checkpoint_dir):
         os.mkdir(checkpoint_dir)
     torch.save(state, checkpoint_file.format(epoch))
-    torch.save(state, "checkpoints/rad_" + str(epoch)+".pth")
+    torch.save(state, f"checkpoints/{args.short_prefix}_{epoch}.pth")
 
 
 for epoch in range(start_epoch,  args.end_epoch+1):

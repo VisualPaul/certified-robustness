@@ -22,7 +22,7 @@ from smoothing import (AverageCounter, MovingAverageCounter,
 
 parser = argparse.ArgumentParser(description='PyTorch Celeba Certification')
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
-parser.add_argument('--checkpoint', help='checkpoint')
+parser.add_argument('--checkpoint', help='checkpoint', required=True)
 parser.add_argument('--seed', default=1, type=int, help='seed')
 parser.add_argument('--dataset-path', default='dsets/',
                     help='path to CelebA dataset')
@@ -44,7 +44,6 @@ parser.add_argument('--normalize', action='store_true',
                     help='normalize dataset')
 parser.add_argument('--test', action='store_true',
                     help='Use test set instead of validation')
-parser.add_argument('--figure', help='where to store the plot')
 parser.add_argument('--radii', help='where to store the radii', required=True)
 
 args = parser.parse_args()
@@ -57,7 +56,7 @@ CUDA = torch.cuda.is_available()
 if CUDA:
     device = torch.device('cuda')
     print(torch.cuda.get_device_name(device))
-    cudnn.benchmark = (args.k is None or args.k > 5)
+    cudnn.benchmark = True
 else:
     device = torch.device('cpu')
 
@@ -66,10 +65,6 @@ batch_size = args.batch_size
 
 assert batch_size > 0
 
-checkpoint = args.checkpoint
-
-assert os.path.isfile(checkpoint), f'chekpoint does not exist {checkpoint}'
-checkpoint = torch.load(checkpoint)
 celeba_test_dataset = get_test_dataset(args.dataset_path,
                                        normalize=args.normalize,
                                        test_set=args.test)
@@ -84,22 +79,27 @@ img_std = [0.2660, 0.2452, 0.2414]
 model = model.to(device)
 #model = nn.DataParallel(model)
 
-model.load_state_dict(checkpoint['net'])
+for i in tqdm.trange(1, 51):
+    checkpoint = args.checkpoint.format(num=i)
+    radii_name = args.radii.format(num=i)
 
-if args.k:
-    rng = tqdm.trange(args.k)
-else:
-    rng = tqdm.trange(len(celeba_test_dataset))
+    print(f'checkpoint is "{checkpoint}", saving as "{radii_name}"')
 
-radii = calculate_radii(celeba_test_dataset, rng, model, args.n_select,
-                        args.n_estimate, args.alpha, args.sigma, device=device,
-                        batch_size=batch_size)
+    assert os.path.isfile(checkpoint), f'chekpoint does not exist {checkpoint}'
+    checkpoint = torch.load(checkpoint)
 
-if args.radii:
-    torch.save(radii, args.radii)
+    model.load_state_dict(checkpoint['net'])
 
-if args.figure:
-    fig, ax = plt.subplots()
-    rad, res = get_certified_accuracies(radii)
-    ax.plot(rad, res)
-    fig.savefig(args.figure)
+    if args.k:
+        rng = range(args.k)
+    else:
+        rng = range(len(celeba_test_dataset))
+
+    if i == 1:
+        rng = tqdm.tqdm(rng)
+
+    radii = calculate_radii(celeba_test_dataset, rng, model, args.n_select,
+                            args.n_estimate, args.alpha, args.sigma, device=device,
+                            batch_size=batch_size)
+
+    torch.save(radii, radii_name)

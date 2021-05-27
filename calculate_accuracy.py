@@ -75,10 +75,12 @@ USE_6_CHANNELS = (INPUT_CHANNELS == 6)
 model = resnet.resnet50(num_classes=40,
                         input_channels=INPUT_CHANNELS)
 
+"""
 if checkpoint.get('normalize', False):
     if args.normalize:
         print('Warning: both early and late normalizations are active')
     model = nn.Sequential([NormalizeLayer(img_mean, img_std), model])
+"""
 
 model = model.to(device)
 
